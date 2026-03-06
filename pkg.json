@@ -1,10 +1,23 @@
 {
   "BuildIso": {
-    "version": "v2026.5",
+    "version": "2026.5",
     "url": "https://github.com/BuildIso/BuildIso/releases/download/v2026.5/BuildIso.exe"
   },
   "ripzip": {
-    "version": "v2026.1",
+    "version": "2026.1",
     "url": "https://github.com/BuildIso/ripzip/releases/download/v2026.1/ripzip.exe"
+  },
+  "CXWNavigator": {
+    "version": "2026.1",
+    "url": "https://github.com/BuildIso/CXWNetwork/releases/download/v2026.1/CXWNavigator.exe"
+  },
+  "BuildIsoDefender": {
+    "version": "2026.1",
+    "url": "https://github.com/BuildIso/BuildIsoDefender/releases/download/v2026.1/BuildIsoDefender.exe"
+  },
+  "BuildIsoEncrypt": {
+    "version": "2026.1",
+    "url": "https://github.com/BuildIso/BuildIsoEncrypt/releases/download/v2026.1/BuildIsoEncrypt.exe"
   }
 }
+
