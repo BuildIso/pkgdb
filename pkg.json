@@ -1,0 +1,10 @@
+{
+  "BuildIso": {
+    "version": "v2026.5",
+    "url": "https://github.com/BuildIso/BuildIso/releases/download/v2026.5/BuildIso.exe"
+  },
+  "ripzip": {
+    "version": "v2026.1",
+    "url": "https://github.com/BuildIso/ripzip/releases/download/v2026.1/ripzip.exe"
+  }
+}
