@@ -2,57 +2,40 @@ name: Update Global Database
 on:
   pull_request:
     types: [closed]
-    branches:
-      - main
-
-permissions:
-  contents: write
+    branches: [packages]
 
 jobs:
   update-json:
-    # On s'exécute uniquement si la PR est fusionnée
-    if: github.event.pull_request.merged == true
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'Validation-Passed')
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Main
+      - name: Checkout Packages
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: packages
 
-      - name: Checkout Pages Branch
+      - name: Checkout Pages
         uses: actions/checkout@v4
         with:
           ref: pages
           path: db-branch
 
-      - name: Update JSON logic
-        id: update
+      - name: Update JSON
         run: |
-          # 1. On trouve le fichier .txt qui vient d'être ajouté
           NEW_FILE=$(ls -t packages/*.txt | head -1)
-          
-          # 2. On extrait les valeurs proprement
-          # On utilise sed pour supprimer "Package: ", "Version: ", etc.
           P_NAME=$(grep "Package:" $NEW_FILE | sed 's/Package: //g' | xargs)
           P_VER=$(grep "Version:" $NEW_FILE | sed 's/Version: //g' | xargs)
           P_URL=$(grep "URL:" $NEW_FILE | sed 's/URL: //g' | xargs)
-
-          echo "Updating $P_NAME in pkg.json..."
-
-          # 3. On modifie le pkg.json sur la branche pages avec jq
-          cd db-branch
           
-          # Cette commande magique ajoute l'entrée sans effacer le reste
-          jq --arg name "$P_NAME" \
-             --arg ver "$P_VER" \
-             --arg url "$P_URL" \
+          cd db-branch
+          jq --arg name "$P_NAME" --arg ver "$P_VER" --arg url "$P_URL" \
              '. + {($name): {"version": $ver, "url": $url}}' pkg.json > tmp.json && mv tmp.json pkg.json
 
-      - name: Commit and Push to Pages
+      - name: Push to Pages
         run: |
           cd db-branch
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pkg.json
-          git commit -m "Database Update: Added package from PR #${{ github.event.pull_request.number }}"
+          git commit -m "Add package to DB"
           git push origin pages
