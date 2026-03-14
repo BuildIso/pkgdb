@@ -6,7 +6,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  issues: write
 
 jobs:
   scan:
@@ -15,95 +14,62 @@ jobs:
       - name: Checkout PR Branch
         uses: actions/checkout@v4
         with:
+          # On récupère la branche de la PR, pas main !
           ref: ${{ github.event.pull_request.head.ref }}
 
-      - name: Get URL and Metadata
+      - name: Get Data from TXT
         id: info
         run: |
-          # On cherche le fichier .txt dans la branche actuelle
+          # On cherche le fichier dans le dossier packages de la branche PR
           FILE_PATH=$(find packages -name "*.txt" | head -1)
-          # On nettoie l'URL (suppression des espaces et caractères invisibles)
           URL=$(grep "URL:" "$FILE_PATH" | sed 's/URL: //g' | xargs)
-          
           echo "url=$URL" >> $GITHUB_OUTPUT
           echo "file_path=$FILE_PATH" >> $GITHUB_OUTPUT
 
       - name: VirusTotal Scan
         id: vt
         run: |
-          # Téléchargement
           curl -L -o sample.exe "${{ steps.info.outputs.url }}"
           
-          # Envoi à VirusTotal
-          RESPONSE=$(curl --request POST \
+          # Envoi à VT
+          ANALYSIS_ID=$(curl --request POST \
             --url https://www.virustotal.com/api/v3/files \
             --header "x-api-key: ${{ secrets.VT_API_KEY }}" \
-            --form file=@sample.exe)
+            --form file=@sample.exe | jq -r '.data.id')
           
-          ANALYSIS_ID=$(echo $RESPONSE | jq -r '.data.id')
+          sleep 45 # Attente des résultats
           
-          if [ "$ANALYSIS_ID" == "null" ]; then
-            echo "Erreur API VirusTotal : $RESPONSE"
-            exit 1
-          fi
-
-          echo "Waiting for scan results..."
-          # On attend un peu plus car VT peut être lent sur les nouveaux fichiers
-          sleep 45 
-          
-          # Récupération du score avec sécurité si le résultat est encore "queued"
-          STATS=$(curl --request GET \
+          MALICIOUS=$(curl --request GET \
             --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
-            --header "x-api-key: ${{ secrets.VT_API_KEY }}" | jq '.data.attributes.stats')
+            --header "x-api-key: ${{ secrets.VT_API_KEY }}" | jq -r '.data.attributes.stats.malicious // 0')
           
-          MALICIOUS=$(echo $STATS | jq -r '.malicious // 0')
           echo "malicious=$MALICIOUS" >> $GITHUB_OUTPUT
 
-      - name: Process Results
+      - name: Write Logs to TXT and Label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          FILE="${{ steps.info.outputs.file_path }}"
           MALICIOUS=${{ steps.vt.outputs.malicious }}
-          FILE=${{ steps.info.outputs.file_path }}
           
           if [ "$MALICIOUS" -gt 5 ]; then
-            RESULT_LOG="Checks not passed ($MALICIOUS detections)"
+            LOG="Checks not passed ($MALICIOUS detections)"
             LABEL="checks-not-passed"
           else
-            RESULT_LOG="Checks passed ($MALICIOUS detections)"
+            LOG="Checks passed ($MALICIOUS detections)"
             LABEL="checks-passed"
           fi
-          
-          # Mise à jour du fichier .txt (on évite les doublons si le bot repasse)
-          sed -i '/Security Scan:/d' "$FILE"
-          sed -i '/Verifying with a human/d' "$FILE"
-          
-          echo "Security Scan: $RESULT_LOG" >> "$FILE"
+
+          # On écrit les logs DIRECTEMENT dans le fichier sur la branche
+          echo "Security Scan: $LOG" >> "$FILE"
           echo "Verifying with a human..." >> "$FILE"
-          
-          # Export pour le commentaire final
-          echo "LOG=$RESULT_LOG" >> $GITHUB_ENV
-          
-          # Push des modifs
+
+          # On commit les logs sur la branche de la PR
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "$FILE"
-          git commit -m "Security Scan: $RESULT_LOG"
+          git commit -m "Security Scan: $LOG"
           git push
 
-          # Ajout du label via GitHub CLI
+          # On met le label sur la PR
           gh pr edit ${{ github.event.pull_request.number }} --add-label "$LABEL"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Final Comment
-        uses: actions/github-script@v6
-        env:
-          REPORT_LOG: ${{ env.LOG }}
-        with:
-          script: |
-            const status = process.env.REPORT_LOG;
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `### Security Report\n**Result:** ${status}\n\nManual verification by a human is still required before merging.`
-            })
