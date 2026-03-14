@@ -1,0 +1,4 @@
+Package: EICAR
+Version: 1.9.0
+URL: https://secure.eicar.org/eicar.com.txt
+Submitted by: srcfrcg-del
