@@ -13,49 +13,60 @@ jobs:
     if: startsWith(github.event.issue.title, '[Package]')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Extract Info
+      - name: Extract Form Data
         id: vars
+        shell: bash
         run: |
-          # Extraction du nom depuis le titre
-          PKG=$(echo "${{ github.event.issue.title }}" | sed 's/\[Package\]: //g' | xargs)
-          CLEAN_PKG=$(echo "$PKG" | tr ' ' '-')
+          # 1. Extraction du nom depuis le titre (plus fiable)
+          PKG_TITLE=$(echo "${{ github.event.issue.title }}" | sed 's/\[Package\]: //g' | xargs)
+          CLEAN_PKG=$(echo "$PKG_TITLE" | tr ' ' '-')
           
-          # Extraction de l'URL depuis le corps (on cherche la ligne après "Download URL")
-          URL=$(echo "${{ github.event.issue.body }}" | grep -A 1 "Download URL" | tail -n 1 | xargs)
+          # 2. Extraction des données du corps de l'Issue
+          # On cherche la ligne juste après le titre de la section dans le formulaire
+          BODY='${{ github.event.issue.body }}'
           
-          # Extraction de la version
-          VER=$(echo "${{ github.event.issue.body }}" | grep -A 1 "Package Version" | tail -n 1 | xargs)
+          PKG_NAME=$(echo "$BODY" | awk '/### Package Name/{getline; getline; print}' | xargs)
+          PKG_VER=$(echo "$BODY" | awk '/### Package Version/{getline; getline; print}' | xargs)
+          PKG_URL=$(echo "$BODY" | awk '/### Download URL/{getline; getline; print}' | xargs)
+
+          # Fallback au titre si le champ Name est vide
+          if [ -z "$PKG_NAME" ]; then PKG_NAME="$PKG_TITLE"; fi
 
           echo "pkg_name=$CLEAN_PKG" >> $GITHUB_OUTPUT
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "display_name=$PKG_NAME" >> $GITHUB_OUTPUT
+          echo "version=$PKG_VER" >> $GITHUB_OUTPUT
+          echo "url=$PKG_URL" >> $GITHUB_OUTPUT
 
-      - name: Push Changes
+      - name: Create Branch and File
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "add-${{ steps.vars.outputs.pkg_name }}"
+          
+          BRANCH_NAME="add-${{ steps.vars.outputs.pkg_name }}"
+          git checkout -b "$BRANCH_NAME"
           
           mkdir -p packages
           
-          # ON ÉCRIT LE CONTENU RÉEL ICI :
-          echo "Package: ${{ steps.vars.outputs.pkg_name }}" > "packages/${{ steps.vars.outputs.pkg_name }}.txt"
-          echo "Version: ${{ steps.vars.outputs.version }}" >> "packages/${{ steps.vars.outputs.pkg_name }}.txt"
-          echo "URL: ${{ steps.vars.outputs.url }}" >> "packages/${{ steps.vars.outputs.pkg_name }}.txt"
-          echo "Submitted by: ${{ github.event.issue.user.login }}" >> "packages/${{ steps.vars.outputs.pkg_name }}.txt"
+          # Écriture du fichier avec les données récupérées
+          FILE_PATH="packages/${{ steps.vars.outputs.pkg_name }}.txt"
+          echo "Package: ${{ steps.vars.outputs.display_name }}" > "$FILE_PATH"
+          echo "Version: ${{ steps.vars.outputs.version }}" >> "$FILE_PATH"
+          echo "URL: ${{ steps.vars.outputs.url }}" >> "$FILE_PATH"
+          echo "Submitted by: ${{ github.event.issue.user.login }}" >> "$FILE_PATH"
           
           git add .
-          git commit -m "Add ${{ steps.vars.outputs.pkg_name }} v${{ steps.vars.outputs.version }}"
-          git push origin "add-${{ steps.vars.outputs.pkg_name }}"
+          git commit -m "Add ${{ steps.vars.outputs.display_name }} v${{ steps.vars.outputs.version }}"
+          git push origin "$BRANCH_NAME"
 
       - name: Create Pull Request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr create \
-            --title "Add ${{ steps.vars.outputs.pkg_name }}" \
-            --body "Closes #${{ github.event.issue.number }}. Automatic PR." \
+            --title "Add ${{ steps.vars.outputs.display_name }}" \
+            --body "Closes #${{ github.event.issue.number }}. Automatic PR from Issue Form." \
             --base main \
             --head "add-${{ steps.vars.outputs.pkg_name }}"
