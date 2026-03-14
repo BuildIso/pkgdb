@@ -3,7 +3,6 @@ on:
   issues:
     types: [opened]
 
-# AJOUTE ÇA ICI :
 permissions:
   contents: write
   pull-requests: write
@@ -14,40 +13,33 @@ jobs:
     if: startsWith(github.event.issue.title, '[Package]')
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Create JSON from Issue
-        id: parse
+      - name: Extract Info
+        id: vars
         run: |
-          # On extrait les données du formulaire (Package Name et URL)
-          PKG_NAME=$(echo "${{ github.event.issue.body }}" | grep -A 1 "Package Name" | tail -n 1 | xargs)
-          URL=$(echo "${{ github.event.issue.body }}" | grep -A 1 "Download URL" | tail -n 1 | xargs)
-          
-          echo "pkg_name=$PKG_NAME" >> $GITHUB_OUTPUT
-          echo "url=$URL" >> $GITHUB_OUTPUT
+          # On récupère le nom après "[Package]: "
+          PKG=$(echo "${{ github.event.issue.title }}" | sed 's/\[Package\]: //g' | xargs)
+          # On remplace les espaces par des tirets pour la branche
+          CLEAN_PKG=$(echo "$PKG" | tr ' ' '-')
+          echo "pkg_name=$CLEAN_PKG" >> $GITHUB_OUTPUT
 
-      - name: Create new branch and file
+      - name: Push Changes
         run: |
-          BRANCH_NAME="add-${{ steps.parse.outputs.pkg_name }}"
-          git checkout -b $BRANCH_NAME
-          
-          # On crée un petit fichier JSON pour le package
-          echo '{ "name": "${{ steps.parse.outputs.pkg_name }}", "url": "${{ steps.parse.outputs.url }}" }' > "${{ steps.parse.outputs.pkg_name }}.json"
-          
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "add-${{ steps.vars.outputs.pkg_name }}"
+          echo "Submission for ${{ steps.vars.outputs.pkg_name }}" > "packages/${{ steps.vars.outputs.pkg_name }}.txt"
           git add .
-          git commit -m "Add ${{ steps.parse.outputs.pkg_name }} from Issue #${{ github.event.issue.number }}"
-          git push origin $BRANCH_NAME
+          git commit -m "Add ${{ steps.vars.outputs.pkg_name }}"
+          git push origin "add-${{ steps.vars.outputs.pkg_name }}"
 
-      - name: Open Pull Request
-        uses: octokit/request-action@v2.x
-        with:
-          route: POST /repos/${{ github.repository }}/pulls
-          title: "Add ${{ steps.parse.outputs.pkg_name }}"
-          head: "add-${{ steps.parse.outputs.pkg_name }}"
-          base: "main"
-          body: "Closes #${{ github.event.issue.number }}. Automatic PR generated from issue form."
+      - name: Create Pull Request
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "Add ${{ steps.vars.outputs.pkg_name }}" \
+            --body "Closes #${{ github.event.issue.number }}. Automatic PR." \
+            --base main \
+            --head "add-${{ steps.vars.outputs.pkg_name }}"
