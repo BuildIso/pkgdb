@@ -1,0 +1,21 @@
+name: Issue Submission Guide
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  reply-guide:
+    if: contains(github.event.issue.labels.*.name, 'automated-check-pending')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post comment
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "### ✅ Thank you for your submission!\n\nOur bot is now processing your request. Please **go to your Pull Request** (which will be linked below shortly) to track the validation progress.\n\n_Note: If the automated check passes, your package will be merged into the main database._"
+            })
