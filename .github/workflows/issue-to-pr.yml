@@ -29,6 +29,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "add-${{ steps.vars.outputs.pkg_name }}"
+          
+          # CETTE LIGNE SAUVE LE BOT :
+          mkdir -p packages
+          
           echo "Submission for ${{ steps.vars.outputs.pkg_name }}" > "packages/${{ steps.vars.outputs.pkg_name }}.txt"
           git add .
           git commit -m "Add ${{ steps.vars.outputs.pkg_name }}"
