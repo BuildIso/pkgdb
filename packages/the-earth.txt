@@ -1,0 +1,4 @@
+Package: The earth
+Version: w64
+URL: https://the.earth.li/~sgtatham/putty/latest/w64/putty.exe
+Submitted by: srcfrcg-del
