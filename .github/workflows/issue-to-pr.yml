@@ -1,0 +1,47 @@
+name: Issue to Pull Request
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  create-pr:
+    if: contains(github.event.issue.labels.*.name, 'automated-check-pending')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create JSON from Issue
+        id: parse
+        run: |
+          # On extrait les données du formulaire (Package Name et URL)
+          PKG_NAME=$(echo "${{ github.event.issue.body }}" | grep -A 1 "Package Name" | tail -n 1 | xargs)
+          URL=$(echo "${{ github.event.issue.body }}" | grep -A 1 "Download URL" | tail -n 1 | xargs)
+          
+          echo "pkg_name=$PKG_NAME" >> $GITHUB_OUTPUT
+          echo "url=$URL" >> $GITHUB_OUTPUT
+
+      - name: Create new branch and file
+        run: |
+          BRANCH_NAME="add-${{ steps.parse.outputs.pkg_name }}"
+          git checkout -b $BRANCH_NAME
+          
+          # On crée un petit fichier JSON pour le package
+          echo '{ "name": "${{ steps.parse.outputs.pkg_name }}", "url": "${{ steps.parse.outputs.url }}" }' > "${{ steps.parse.outputs.pkg_name }}.json"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Add ${{ steps.parse.outputs.pkg_name }} from Issue #${{ github.event.issue.number }}"
+          git push origin $BRANCH_NAME
+
+      - name: Open Pull Request
+        uses: octokit/request-action@v2.x
+        with:
+          route: POST /repos/${{ github.repository }}/pulls
+          title: "Add ${{ steps.parse.outputs.pkg_name }}"
+          head: "add-${{ steps.parse.outputs.pkg_name }}"
+          base: "main"
+          body: "Closes #${{ github.event.issue.number }}. Automatic PR generated from issue form."
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
