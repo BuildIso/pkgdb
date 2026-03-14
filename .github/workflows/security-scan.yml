@@ -20,34 +20,43 @@ jobs:
       - name: Get URL and Metadata
         id: info
         run: |
-          # On récupère l'URL dans le fichier .txt créé par le Bot 1
-          FILE_PATH=$(ls packages/*.txt | head -1)
-          URL=$(grep "URL:" $FILE_PATH | cut -d' ' -f2-)
+          # On cherche le fichier .txt dans la branche actuelle
+          FILE_PATH=$(find packages -name "*.txt" | head -1)
+          # On nettoie l'URL (suppression des espaces et caractères invisibles)
+          URL=$(grep "URL:" "$FILE_PATH" | sed 's/URL: //g' | xargs)
+          
           echo "url=$URL" >> $GITHUB_OUTPUT
           echo "file_path=$FILE_PATH" >> $GITHUB_OUTPUT
 
       - name: VirusTotal Scan
         id: vt
         run: |
-          # Téléchargement du fichier
+          # Téléchargement
           curl -L -o sample.exe "${{ steps.info.outputs.url }}"
           
-          # Envoi à VirusTotal et récupération du rapport
-          # On utilise l'API v3
-          ANALYSIS_ID=$(curl --request POST \
+          # Envoi à VirusTotal
+          RESPONSE=$(curl --request POST \
             --url https://www.virustotal.com/api/v3/files \
             --header "x-api-key: ${{ secrets.VT_API_KEY }}" \
-            --form file=@sample.exe | jq -r '.data.id')
+            --form file=@sample.exe)
           
+          ANALYSIS_ID=$(echo $RESPONSE | jq -r '.data.id')
+          
+          if [ "$ANALYSIS_ID" == "null" ]; then
+            echo "Erreur API VirusTotal : $RESPONSE"
+            exit 1
+          fi
+
           echo "Waiting for scan results..."
-          sleep 30 # On laisse un peu de temps à VT
+          # On attend un peu plus car VT peut être lent sur les nouveaux fichiers
+          sleep 45 
           
-          # Récupération du score
+          # Récupération du score avec sécurité si le résultat est encore "queued"
           STATS=$(curl --request GET \
             --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
             --header "x-api-key: ${{ secrets.VT_API_KEY }}" | jq '.data.attributes.stats')
           
-          MALICIOUS=$(echo $STATS | jq '.malicious')
+          MALICIOUS=$(echo $STATS | jq -r '.malicious // 0')
           echo "malicious=$MALICIOUS" >> $GITHUB_OUTPUT
 
       - name: Process Results
@@ -56,36 +65,42 @@ jobs:
           FILE=${{ steps.info.outputs.file_path }}
           
           if [ "$MALICIOUS" -gt 5 ]; then
-            echo "STATUS=checks-not-passed" >> $GITHUB_ENV
-            echo "LOG=Checks not passed ($MALICIOUS detections)" >> $GITHUB_ENV
+            RESULT_LOG="Checks not passed ($MALICIOUS detections)"
             LABEL="checks-not-passed"
           else
-            echo "STATUS=checks-passed" >> $GITHUB_ENV
-            echo "LOG=Checks passed ($MALICIOUS detections)" >> $GITHUB_ENV
+            RESULT_LOG="Checks passed ($MALICIOUS detections)"
             LABEL="checks-passed"
           fi
           
-          # Mise à jour du fichier .txt
-          echo "Security Scan: $LOG" >> $FILE
-          echo "Verifying with a human..." >> $FILE
+          # Mise à jour du fichier .txt (on évite les doublons si le bot repasse)
+          sed -i '/Security Scan:/d' "$FILE"
+          sed -i '/Verifying with a human/d' "$FILE"
           
-          # Push des modifs sur la branche de la PR
+          echo "Security Scan: $RESULT_LOG" >> "$FILE"
+          echo "Verifying with a human..." >> "$FILE"
+          
+          # Export pour le commentaire final
+          echo "LOG=$RESULT_LOG" >> $GITHUB_ENV
+          
+          # Push des modifs
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "Security Scan: $LOG"
+          git add "$FILE"
+          git commit -m "Security Scan: $RESULT_LOG"
           git push
 
-          # Ajout du label à la PR
+          # Ajout du label via GitHub CLI
           gh pr edit ${{ github.event.pull_request.number }} --add-label "$LABEL"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Final Comment
         uses: actions/github-script@v6
+        env:
+          REPORT_LOG: ${{ env.LOG }}
         with:
           script: |
-            const status = process.env.LOG;
+            const status = process.env.REPORT_LOG;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
