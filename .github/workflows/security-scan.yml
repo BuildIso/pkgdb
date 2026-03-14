@@ -7,6 +7,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   scan:
@@ -20,23 +21,21 @@ jobs:
 
       - name: VirusTotal Scan
         id: vt
+        shell: bash
         run: |
           FILE_PATH=$(find packages -name "*.txt" | head -1)
           URL=$(grep "URL:" "$FILE_PATH" | sed 's/.*URL://' | xargs)
+          echo "file_path=$FILE_PATH" >> $GITHUB_OUTPUT
           
-          # 1. Vérification de la taille avant upload
-          # On télécharge juste les headers pour voir la taille
+          # 1. Vérification de la taille via Header (70Mo bypass)
           FILE_SIZE=$(curl -sI "$URL" | grep -i Content-Length | awk '{print $2}' | tr -d '\r')
           
-          # Si > 32Mo et que tu n'as pas d'API Premium, on skip le scan auto
           if [ ! -z "$FILE_SIZE" ] && [ "$FILE_SIZE" -gt 33554432 ]; then
-             echo "malicious=MANUAL_CHECK" >> $GITHUB_OUTPUT
-             echo "file_path=$FILE_PATH" >> $GITHUB_OUTPUT
-             echo "Skip: Fichier trop gros (70Mo) pour l'API gratuite."
+             echo "result=LARGE_FILE" >> $GITHUB_OUTPUT
              exit 0
           fi
 
-          # 2. Si taille OK, on scanne normalement
+          # 2. Tentative de Scan
           curl -L -o sample.exe "$URL"
           RESPONSE=$(curl --request POST --url https://www.virustotal.com/api/v3/files \
             --header "x-api-key: ${{ secrets.VT_API_KEY }}" \
@@ -44,42 +43,55 @@ jobs:
           
           ANALYSIS_ID=$(echo $RESPONSE | jq -r '.data.id // empty')
           
-          if [ -z "$ANALYSIS_ID" ]; then
-             echo "malicious=ERROR" >> $GITHUB_OUTPUT
+          if [ -z "$ANALYSIS_ID" ] || [ "$ANALYSIS_ID" == "null" ]; then
+             echo "result=API_ERROR" >> $GITHUB_OUTPUT
           else
              sleep 30
-             MALICIOUS=$(curl --request GET --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
-               --header "x-api-key: ${{ secrets.VT_API_KEY }}" | jq -r '.data.attributes.stats.malicious // 0')
-             echo "malicious=$MALICIOUS" >> $GITHUB_OUTPUT
+             STATS=$(curl --request GET --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
+               --header "x-api-key: ${{ secrets.VT_API_KEY }}")
+             MALICIOUS=$(echo $STATS | jq -r '.data.attributes.stats.malicious // 0')
+             echo "result=$MALICIOUS" >> $GITHUB_OUTPUT
           fi
-          echo "file_path=$FILE_PATH" >> $GITHUB_OUTPUT
 
-      - name: Update TXT and Labels
+      - name: Finalize Report and Labels
+        if: always() # S'exécute même si l'étape précédente a foiré
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          M="${{ steps.vt.outputs.malicious }}"
           FILE="${{ steps.vt.outputs.file_path }}"
-          
-          if [ "$M" == "MANUAL_CHECK" ]; then
-            LOG="Skip (File > 32MB) - Needs Manual Review"
-            L="manual-check-required"
-          elif [ "$M" == "ERROR" ]; then
-            LOG="Scan Error (API Quota?)"
-            L="scan-failed"
-          elif [ "$M" -gt 0 ]; then
-            LOG="Checks not passed ($M detections)"
-            L="unsafe"
+          RES="${{ steps.vt.outputs.result }}"
+          PR_NUM="${{ github.event.pull_request.number }}"
+          ISSUE_NUM=$(gh pr view $PR_NUM --json body -q '.body' | grep -oP 'Closes #\K\d+')
+
+          # Détermination du statut
+          if [ "$RES" == "LARGE_FILE" ]; then
+            MSG="⚠️ Skip (File > 32MB) - Manual Review Required"
+            LAB="manual-check"
+          elif [ "$RES" == "API_ERROR" ] || [ -z "$RES" ]; then
+            MSG="❌ Scan Error (API Limit or Invalid File)"
+            LAB="scan-failed"
+          elif [ "$RES" -gt 0 ]; then
+            MSG="🚨 Unsafe ($RES detections)"
+            LAB="unsafe"
           else
-            LOG="Checks passed"
-            L="safe"
+            MSG="✅ Clean (0 detections)"
+            LAB="safe"
           fi
 
+          # Mise à jour du fichier .txt
           sed -i '/Security Scan:/d' "$FILE"
-          echo "Security Scan: $LOG" >> "$FILE"
+          echo "Security Scan: $MSG" >> "$FILE"
           
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "$FILE"
-          git commit -m "Security Scan: $LOG" && git push || echo "No changes"
-          gh pr edit ${{ github.event.pull_request.number }} --add-label "$L"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          git commit -m "Security Report: $RES" && git push || echo "No changes"
+
+          # Gestion des Labels et de l'Issue
+          gh pr edit $PR_NUM --add-label "$LAB"
+          
+          if [ "$LAB" == "safe" ]; then
+            gh issue comment $ISSUE_NUM --body "Le scan est terminé : **Propre**. La PR sera examinée pour le merge."
+          else
+            gh issue comment $ISSUE_NUM --body "Attention : $MSG. Un administrateur doit vérifier manuellement."
+          fi
