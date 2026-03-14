@@ -62,7 +62,8 @@ jobs:
 
       - name: Create Pull Request
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # On remplace GITHUB_TOKEN par ton nouveau secret
+          GH_TOKEN: ${{ secrets.MY_GH_TOKEN }} 
         run: |
           gh label create "automated-check-pending" --color "E99695" --description "Checking in progress" --force || true
           
