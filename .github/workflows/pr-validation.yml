@@ -1,0 +1,51 @@
+name: Package Validation
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 
+      - name: Verify Download Link
+        run: |
+          # Ici, on imagine que tu extrais l'URL de ton fichier YAML/JSON
+          # On teste si le lien répond 200 OK
+          URL=$(grep -oP 'https?://[^\s"]+' manifest.json | head -1)
+          curl --output /dev/null --silent --head --fail "$URL" || exit 1
+
+      # 
+      - name: Add Success Label
+        if: success()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['Validation-Passed']
+            })
+
+      # 
+      - name: Add Failure Label
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['Validation-Failed']
+            })
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌'
+            })
