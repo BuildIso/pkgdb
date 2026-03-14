@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   create-pr:
-    if: contains(github.event.issue.labels.*.name, 'automated-check-pending')
+    if: startsWith(github.event.issue.title, '[Package]')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
