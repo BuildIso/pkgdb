@@ -1,7 +1,7 @@
 {
   "BuildIso": {
-    "version": "2026.5",
-    "url": "https://github.com/BuildIso/BuildIso/releases/download/v2026.5/BuildIso.exe"
+    "version": "2026.6",
+    "url": "https://github.com/BuildIso/BuildIso/releases/download/v2026.6/BuildIso.exe"
   },
   "ripzip": {
     "version": "2026.1",
