@@ -20,20 +20,23 @@ jobs:
         id: vars
         shell: bash
         run: |
-          # 1. Extraction du nom depuis le titre (plus fiable)
+          # 1. Nettoyage du titre pour la branche (ex: [Package]: VLC -> VLC)
           PKG_TITLE=$(echo "${{ github.event.issue.title }}" | sed 's/\[Package\]: //g' | xargs)
           CLEAN_PKG=$(echo "$PKG_TITLE" | tr ' ' '-')
           
-          # 2. Extraction des données du corps de l'Issue
-          # On cherche la ligne juste après le titre de la section dans le formulaire
-          BODY='${{ github.event.issue.body }}'
+          # 2. Extraction du corps de l'issue
+          BODY=$(cat << 'EOF'
+          ${{ github.event.issue.body }}
+          EOF
+          )
           
+          # On cherche les infos sous les headers ### générés par ton YAML
           PKG_NAME=$(echo "$BODY" | awk '/### Package Name/{getline; getline; print}' | xargs)
           PKG_VER=$(echo "$BODY" | awk '/### Package Version/{getline; getline; print}' | xargs)
           PKG_URL=$(echo "$BODY" | awk '/### Download URL/{getline; getline; print}' | xargs)
 
-          # Fallback au titre si le champ Name est vide
-          if [ -z "$PKG_NAME" ]; then PKG_NAME="$PKG_TITLE"; fi
+          # Si le champ Name du formulaire est vide, on prend le titre
+          if [ -z "$PKG_NAME" ] || [ "$PKG_NAME" = "_No response_" ]; then PKG_NAME="$PKG_TITLE"; fi
 
           echo "pkg_name=$CLEAN_PKG" >> $GITHUB_OUTPUT
           echo "display_name=$PKG_NAME" >> $GITHUB_OUTPUT
@@ -50,7 +53,7 @@ jobs:
           
           mkdir -p packages
           
-          # Écriture du fichier avec les données récupérées
+          # Création du fichier avec les vraies données
           FILE_PATH="packages/${{ steps.vars.outputs.pkg_name }}.txt"
           echo "Package: ${{ steps.vars.outputs.display_name }}" > "$FILE_PATH"
           echo "Version: ${{ steps.vars.outputs.version }}" >> "$FILE_PATH"
