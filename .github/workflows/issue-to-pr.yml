@@ -18,11 +18,19 @@ jobs:
       - name: Extract Info
         id: vars
         run: |
-          # On récupère le nom après "[Package]: "
+          # Extraction du nom depuis le titre
           PKG=$(echo "${{ github.event.issue.title }}" | sed 's/\[Package\]: //g' | xargs)
-          # On remplace les espaces par des tirets pour la branche
           CLEAN_PKG=$(echo "$PKG" | tr ' ' '-')
+          
+          # Extraction de l'URL depuis le corps (on cherche la ligne après "Download URL")
+          URL=$(echo "${{ github.event.issue.body }}" | grep -A 1 "Download URL" | tail -n 1 | xargs)
+          
+          # Extraction de la version
+          VER=$(echo "${{ github.event.issue.body }}" | grep -A 1 "Package Version" | tail -n 1 | xargs)
+
           echo "pkg_name=$CLEAN_PKG" >> $GITHUB_OUTPUT
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "version=$VER" >> $GITHUB_OUTPUT
 
       - name: Push Changes
         run: |
@@ -30,12 +38,16 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "add-${{ steps.vars.outputs.pkg_name }}"
           
-          # CETTE LIGNE SAUVE LE BOT :
           mkdir -p packages
           
-          echo "Submission for ${{ steps.vars.outputs.pkg_name }}" > "packages/${{ steps.vars.outputs.pkg_name }}.txt"
+          # ON ÉCRIT LE CONTENU RÉEL ICI :
+          echo "Package: ${{ steps.vars.outputs.pkg_name }}" > "packages/${{ steps.vars.outputs.pkg_name }}.txt"
+          echo "Version: ${{ steps.vars.outputs.version }}" >> "packages/${{ steps.vars.outputs.pkg_name }}.txt"
+          echo "URL: ${{ steps.vars.outputs.url }}" >> "packages/${{ steps.vars.outputs.pkg_name }}.txt"
+          echo "Submitted by: ${{ github.event.issue.user.login }}" >> "packages/${{ steps.vars.outputs.pkg_name }}.txt"
+          
           git add .
-          git commit -m "Add ${{ steps.vars.outputs.pkg_name }}"
+          git commit -m "Add ${{ steps.vars.outputs.pkg_name }} v${{ steps.vars.outputs.version }}"
           git push origin "add-${{ steps.vars.outputs.pkg_name }}"
 
       - name: Create Pull Request
