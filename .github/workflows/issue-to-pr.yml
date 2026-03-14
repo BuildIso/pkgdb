@@ -15,27 +15,22 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract Form Data
         id: vars
         shell: bash
         run: |
-          # 1. Nettoyage du titre pour la branche (ex: [Package]: VLC -> VLC)
           PKG_TITLE=$(echo "${{ github.event.issue.title }}" | sed 's/\[Package\]: //g' | xargs)
           CLEAN_PKG=$(echo "$PKG_TITLE" | tr ' ' '-')
           
-          # 2. Extraction du corps de l'issue
-          BODY=$(cat << 'EOF'
-          ${{ github.event.issue.body }}
-          EOF
-          )
+          BODY='${{ github.event.issue.body }}'
           
-          # On cherche les infos sous les headers ### générés par ton YAML
           PKG_NAME=$(echo "$BODY" | awk '/### Package Name/{getline; getline; print}' | xargs)
           PKG_VER=$(echo "$BODY" | awk '/### Package Version/{getline; getline; print}' | xargs)
           PKG_URL=$(echo "$BODY" | awk '/### Download URL/{getline; getline; print}' | xargs)
 
-          # Si le champ Name du formulaire est vide, on prend le titre
           if [ -z "$PKG_NAME" ] || [ "$PKG_NAME" = "_No response_" ]; then PKG_NAME="$PKG_TITLE"; fi
 
           echo "pkg_name=$CLEAN_PKG" >> $GITHUB_OUTPUT
@@ -43,7 +38,7 @@ jobs:
           echo "version=$PKG_VER" >> $GITHUB_OUTPUT
           echo "url=$PKG_URL" >> $GITHUB_OUTPUT
 
-      - name: Create Branch and File
+      - name: Create Branch and Commit File
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -53,14 +48,17 @@ jobs:
           
           mkdir -p packages
           
-          # Création du fichier avec les vraies données
           FILE_PATH="packages/${{ steps.vars.outputs.pkg_name }}.txt"
-          echo "Package: ${{ steps.vars.outputs.display_name }}" > "$FILE_PATH"
-          echo "Version: ${{ steps.vars.outputs.version }}" >> "$FILE_PATH"
-          echo "URL: ${{ steps.vars.outputs.url }}" >> "$FILE_PATH"
-          echo "Submitted by: ${{ github.event.issue.user.login }}" >> "$FILE_PATH"
           
-          git add .
+          # On crée le fichier proprement
+          cat <<EOF > "$FILE_PATH"
+          Package: ${{ steps.vars.outputs.display_name }}
+          Version: ${{ steps.vars.outputs.version }}
+          URL: ${{ steps.vars.outputs.url }}
+          Submitted by: ${{ github.event.issue.user.login }}
+          EOF
+          
+          git add "$FILE_PATH"
           git commit -m "Add ${{ steps.vars.outputs.display_name }} v${{ steps.vars.outputs.version }}"
           git push origin "$BRANCH_NAME"
 
@@ -68,8 +66,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # On crée la PR seulement APRES que le fichier soit pushé sur la branche
           gh pr create \
             --title "Add ${{ steps.vars.outputs.display_name }}" \
             --body "Closes #${{ github.event.issue.number }}. Automatic PR from Issue Form." \
             --base main \
-            --head "add-${{ steps.vars.outputs.pkg_name }}"
+            --head "add-${{ steps.vars.outputs.pkg_name }}" \
+            --label "automated-check-pending"
