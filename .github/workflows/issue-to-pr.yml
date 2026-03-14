@@ -23,24 +23,15 @@ jobs:
         id: vars
         shell: bash
         run: |
-          # 1. Extraction et nettoyage du nom (format-url-compatible)
           PKG_TITLE=$(echo "${{ github.event.issue.title }}" | sed 's/\[Package\]: //g' | xargs)
           CLEAN_PKG=$(echo "$PKG_TITLE" | tr ' ' '-' | tr -cd '[:alnum:]-')
-          
-          # 2. Récupération du corps de l'Issue
           BODY='${{ github.event.issue.body }}'
-          
-          # 3. Extraction des champs du formulaire (avec saut de ligne GitHub)
           PKG_NAME=$(echo "$BODY" | awk '/### Package Name/{getline; getline; print}' | xargs)
           PKG_VER=$(echo "$BODY" | awk '/### Package Version/{getline; getline; print}' | xargs)
           PKG_URL=$(echo "$BODY" | awk '/### Download URL/{getline; getline; print}' | xargs)
-
-          # Secours si le nom est vide
           if [ -z "$PKG_NAME" ] || [ "$PKG_NAME" = "_No response_" ]; then
             PKG_NAME="$PKG_TITLE"
           fi
-
-          # Export propre
           echo "pkg_name=$CLEAN_PKG" >> $GITHUB_OUTPUT
           echo "display_name=$PKG_NAME" >> $GITHUB_OUTPUT
           echo "version=$PKG_VER" >> $GITHUB_OUTPUT
@@ -53,21 +44,18 @@ jobs:
           
           BRANCH_NAME="add-${{ steps.vars.outputs.pkg_name }}"
           
-          # On s'assure d'être sur la branche packages avant de bifurquer
           git checkout packages
           git checkout -b "$BRANCH_NAME"
           
           mkdir -p packages
           FILE_PATH="packages/${{ steps.vars.outputs.pkg_name }}.txt"
           
-          # Création du fichier .txt sans espaces parasites
-          cat <<EOF > "$FILE_PATH"
-Package: ${{ steps.vars.outputs.display_name }}
-Version: ${{ steps.vars.outputs.version }}
-URL: ${{ steps.vars.outputs.url }}
-Submitted by: ${{ github.event.issue.user.login }}
-EOF
-          
+          # Utilisation de echo au lieu de EOF pour éviter les erreurs YAML
+          echo "Package: ${{ steps.vars.outputs.display_name }}" > "$FILE_PATH"
+          echo "Version: ${{ steps.vars.outputs.version }}" >> "$FILE_PATH"
+          echo "URL: ${{ steps.vars.outputs.url }}" >> "$FILE_PATH"
+          echo "Submitted by: ${{ github.event.issue.user.login }}" >> "$FILE_PATH"
+
           git add "$FILE_PATH"
           git commit -m "Add ${{ steps.vars.outputs.display_name }} v${{ steps.vars.outputs.version }}"
           git push origin "$BRANCH_NAME" --force
@@ -76,10 +64,8 @@ EOF
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Sécurité : Création du label s'il n'existe pas (évite le plantage)
           gh label create "automated-check-pending" --color "E99695" --description "Checking in progress" --force || true
           
-          # Création de la PR vers la branche packages
           gh pr create \
             --title "Add ${{ steps.vars.outputs.display_name }}" \
             --body "Closes #${{ github.event.issue.number }}. Automatic PR to packages branch." \
