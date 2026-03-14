@@ -1,4 +1,4 @@
-name: Issue to Pull Request
+name: Issue to Pr
 on:
   issues:
     types: [opened]
@@ -16,23 +16,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: packages
           fetch-depth: 0
 
       - name: Extract Form Data
         id: vars
         shell: bash
         run: |
+          # 1. Extraction et nettoyage du nom (format-url-compatible)
           PKG_TITLE=$(echo "${{ github.event.issue.title }}" | sed 's/\[Package\]: //g' | xargs)
-          CLEAN_PKG=$(echo "$PKG_TITLE" | tr ' ' '-')
+          CLEAN_PKG=$(echo "$PKG_TITLE" | tr ' ' '-' | tr -cd '[:alnum:]-')
           
+          # 2. Récupération du corps de l'Issue
           BODY='${{ github.event.issue.body }}'
           
+          # 3. Extraction des champs du formulaire (avec saut de ligne GitHub)
           PKG_NAME=$(echo "$BODY" | awk '/### Package Name/{getline; getline; print}' | xargs)
           PKG_VER=$(echo "$BODY" | awk '/### Package Version/{getline; getline; print}' | xargs)
           PKG_URL=$(echo "$BODY" | awk '/### Download URL/{getline; getline; print}' | xargs)
 
-          if [ -z "$PKG_NAME" ] || [ "$PKG_NAME" = "_No response_" ]; then PKG_NAME="$PKG_TITLE"; fi
+          # Secours si le nom est vide
+          if [ -z "$PKG_NAME" ] || [ "$PKG_NAME" = "_No response_" ]; then
+            PKG_NAME="$PKG_TITLE"
+          fi
 
+          # Export propre
           echo "pkg_name=$CLEAN_PKG" >> $GITHUB_OUTPUT
           echo "display_name=$PKG_NAME" >> $GITHUB_OUTPUT
           echo "version=$PKG_VER" >> $GITHUB_OUTPUT
@@ -44,32 +52,37 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           BRANCH_NAME="add-${{ steps.vars.outputs.pkg_name }}"
+          
+          # On s'assure d'être sur la branche packages avant de bifurquer
+          git checkout packages
           git checkout -b "$BRANCH_NAME"
           
           mkdir -p packages
-          
           FILE_PATH="packages/${{ steps.vars.outputs.pkg_name }}.txt"
           
-          # On crée le fichier proprement
+          # Création du fichier .txt sans espaces parasites
           cat <<EOF > "$FILE_PATH"
-          Package: ${{ steps.vars.outputs.display_name }}
-          Version: ${{ steps.vars.outputs.version }}
-          URL: ${{ steps.vars.outputs.url }}
-          Submitted by: ${{ github.event.issue.user.login }}
-          EOF
+Package: ${{ steps.vars.outputs.display_name }}
+Version: ${{ steps.vars.outputs.version }}
+URL: ${{ steps.vars.outputs.url }}
+Submitted by: ${{ github.event.issue.user.login }}
+EOF
           
           git add "$FILE_PATH"
           git commit -m "Add ${{ steps.vars.outputs.display_name }} v${{ steps.vars.outputs.version }}"
-          git push origin "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME" --force
 
       - name: Create Pull Request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # On crée la PR seulement APRES que le fichier soit pushé sur la branche
+          # Sécurité : Création du label s'il n'existe pas (évite le plantage)
+          gh label create "automated-check-pending" --color "E99695" --description "Checking in progress" --force || true
+          
+          # Création de la PR vers la branche packages
           gh pr create \
             --title "Add ${{ steps.vars.outputs.display_name }}" \
-            --body "Closes #${{ github.event.issue.number }}. Automatic PR from Issue Form." \
-            --base main \
+            --body "Closes #${{ github.event.issue.number }}. Automatic PR to packages branch." \
+            --base packages \
             --head "add-${{ steps.vars.outputs.pkg_name }}" \
             --label "automated-check-pending"
