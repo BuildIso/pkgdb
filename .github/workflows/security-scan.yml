@@ -24,68 +24,55 @@ jobs:
           FILE_PATH=$(find packages -name "*.txt" | head -1)
           URL=$(grep "URL:" "$FILE_PATH" | sed 's/.*URL://' | xargs)
           
-          echo "Downloading from: $URL"
-          curl -L -o sample.exe "$URL"
+          # 1. Vérification de la taille avant upload
+          # On télécharge juste les headers pour voir la taille
+          FILE_SIZE=$(curl -sI "$URL" | grep -i Content-Length | awk '{print $2}' | tr -d '\r')
           
-          FILE_SIZE=$(stat -c%s "sample.exe")
-          echo "File size: $FILE_SIZE bytes"
-
-          # Gestion Gros Fichiers
-          if [ "$FILE_SIZE" -gt 33554432 ]; then
-            echo "Requesting Large File Upload URL..."
-            UP_RES=$(curl --request GET --url https://www.virustotal.com/api/v3/files/upload_url \
-              --header "x-api-key: ${{ secrets.VT_API_KEY }}")
-            UPLOAD_URL=$(echo $UP_RES | jq -r '.data // empty')
-            
-            if [ -z "$UPLOAD_URL" ]; then
-                echo "ERROR: Could not get upload URL. API Response: $UP_RES"
-                exit 1
-            fi
-          else
-            UPLOAD_URL="https://www.virustotal.com/api/v3/files"
+          # Si > 32Mo et que tu n'as pas d'API Premium, on skip le scan auto
+          if [ ! -z "$FILE_SIZE" ] && [ "$FILE_SIZE" -gt 33554432 ]; then
+             echo "malicious=MANUAL_CHECK" >> $GITHUB_OUTPUT
+             echo "file_path=$FILE_PATH" >> $GITHUB_OUTPUT
+             echo "Skip: Fichier trop gros (70Mo) pour l'API gratuite."
+             exit 0
           fi
 
-          echo "Uploading to VT..."
-          RESPONSE=$(curl --request POST --url "$UPLOAD_URL" \
+          # 2. Si taille OK, on scanne normalement
+          curl -L -o sample.exe "$URL"
+          RESPONSE=$(curl --request POST --url https://www.virustotal.com/api/v3/files \
             --header "x-api-key: ${{ secrets.VT_API_KEY }}" \
             --form file=@sample.exe)
           
-          # On affiche la réponse pour débugger en cas de crash jq
-          echo "API Response: $RESPONSE"
-          
           ANALYSIS_ID=$(echo $RESPONSE | jq -r '.data.id // empty')
-
-          if [ -z "$ANALYSIS_ID" ] || [ "$ANALYSIS_ID" == "null" ]; then
-            echo "VirusTotal Analysis Failed. Check response above."
-            exit 1
+          
+          if [ -z "$ANALYSIS_ID" ]; then
+             echo "malicious=ERROR" >> $GITHUB_OUTPUT
+          else
+             sleep 30
+             MALICIOUS=$(curl --request GET --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
+               --header "x-api-key: ${{ secrets.VT_API_KEY }}" | jq -r '.data.attributes.stats.malicious // 0')
+             echo "malicious=$MALICIOUS" >> $GITHUB_OUTPUT
           fi
-
-          echo "Waiting for results (60s)..."
-          sleep 60
-          
-          STATS=$(curl --request GET --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
-            --header "x-api-key: ${{ secrets.VT_API_KEY }}")
-          
-          MALICIOUS=$(echo $STATS | jq -r '.data.attributes.stats.malicious // 0')
-          
-          echo "malicious=$MALICIOUS" >> $GITHUB_OUTPUT
           echo "file_path=$FILE_PATH" >> $GITHUB_OUTPUT
 
       - name: Update TXT and Labels
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FILE="${{ steps.vt.outputs.file_path }}"
           M="${{ steps.vt.outputs.malicious }}"
+          FILE="${{ steps.vt.outputs.file_path }}"
           
-          if [ "$M" -gt 5 ]; then
+          if [ "$M" == "MANUAL_CHECK" ]; then
+            LOG="Skip (File > 32MB) - Needs Manual Review"
+            L="manual-check-required"
+          elif [ "$M" == "ERROR" ]; then
+            LOG="Scan Error (API Quota?)"
+            L="scan-failed"
+          elif [ "$M" -gt 0 ]; then
             LOG="Checks not passed ($M detections)"
-            L="checks-not-passed"
+            L="unsafe"
           else
-            LOG="Checks passed ($M detections)"
-            L="checks-passed"
+            LOG="Checks passed"
+            L="safe"
           fi
-          
+
           sed -i '/Security Scan:/d' "$FILE"
           echo "Security Scan: $LOG" >> "$FILE"
           
@@ -93,5 +80,6 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "$FILE"
           git commit -m "Security Scan: $LOG" && git push || echo "No changes"
-          
           gh pr edit ${{ github.event.pull_request.number }} --add-label "$L"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
