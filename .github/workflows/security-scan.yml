@@ -21,22 +21,36 @@ jobs:
       - name: VirusTotal Scan
         id: vt
         run: |
+          # 1. Trouver le fichier .txt
           FILE_PATH=$(find packages -name "*.txt" | head -1)
-          URL=$(grep "URL:" "$FILE_PATH" | sed 's/URL: //g' | xargs)
           
-          echo "Downloading file..."
+          # 2. Extraire l'URL proprement (on enlève "URL: " et les espaces)
+          URL=$(grep "URL:" "$FILE_PATH" | cut -d':' -f2- | xargs)
+          
+          echo "Target URL: $URL"
+          
+          if [[ "$URL" != http* ]]; then
+            echo "Erreur : L'URL extraite ($URL) n'est pas valide."
+            exit 1
+          fi
+
+          # 3. Téléchargement
+          echo "Downloading..."
           curl -L -o sample.exe "$URL"
-          FILE_SIZE=$(stat -c%s "sample.exe")
           
-          # Choix de l'API selon la taille (Limite 32MB = 33554432 bytes)
+          FILE_SIZE=$(stat -c%s "sample.exe")
+          echo "File size: $FILE_SIZE bytes"
+
+          # 4. Gestion des gros fichiers (> 32MB)
           if [ "$FILE_SIZE" -gt 33554432 ]; then
-            echo "Large file detected ($FILE_SIZE bytes). Requesting special upload URL..."
+            echo "Large file (>32MB). Getting upload URL..."
             UPLOAD_URL=$(curl --request GET --url https://www.virustotal.com/api/v3/files/upload_url \
               --header "x-api-key: ${{ secrets.VT_API_KEY }}" | jq -r '.data')
           else
             UPLOAD_URL="https://www.virustotal.com/api/v3/files"
           fi
 
+          # 5. Envoi à VirusTotal
           echo "Uploading to VirusTotal..."
           RESPONSE=$(curl --request POST --url "$UPLOAD_URL" \
             --header "x-api-key: ${{ secrets.VT_API_KEY }}" \
@@ -49,7 +63,8 @@ jobs:
             exit 1
           fi
 
-          echo "Waiting for results (60s)..."
+          # 6. Attente (60s pour un gros fichier)
+          echo "Waiting for results..."
           sleep 60
           
           STATS=$(curl --request GET --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
@@ -67,13 +82,7 @@ jobs:
           FILE="${{ steps.vt.outputs.file_path }}"
           M="${{ steps.vt.outputs.malicious }}"
           
-          if [ "$M" -gt 5 ]; then
-            LOG="Checks not passed ($M detections)"
-            L="checks-not-passed"
-          else
-            LOG="Checks passed ($M detections)"
-            L="checks-passed"
-          fi
+          [ "$M" -gt 5 ] && LOG="Checks not passed ($M detections)" && L="checks-not-passed" || LOG="Checks passed ($M detections)" && L="checks-passed"
           
           sed -i '/Security Scan:/d' "$FILE"
           echo "Security Scan: $LOG" >> "$FILE"
@@ -81,6 +90,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "$FILE"
-          git commit -m "Security Scan: $LOG" && git push || echo "No changes to commit"
+          git commit -m "Security Scan: $LOG" && git push || echo "No changes"
           
           gh pr edit ${{ github.event.pull_request.number }} --add-label "$L"
