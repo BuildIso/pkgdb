@@ -1,0 +1,4 @@
+Package: Test
+Version: Test
+URL: https://github.com/BuildIso/BuildIso/releases/download/v2026.6/BuildIso.exe
+Submitted by: srcfrcg-del
