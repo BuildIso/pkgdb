@@ -10,16 +10,16 @@ permissions:
 
 jobs:
   update-json:
-    # On ne s'exécute que si la PR a été fusionnée (pas fermée sans merge)
+    # On s'exécute uniquement si la PR est fusionnée
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Main (PR content)
+      - name: Checkout Main
         uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Checkout Pages Branch (The Database)
+      - name: Checkout Pages Branch
         uses: actions/checkout@v4
         with:
           ref: pages
@@ -28,22 +28,24 @@ jobs:
       - name: Update JSON logic
         id: update
         run: |
-          # 1. On récupère les infos du nouveau fichier (ex: packages/MonApp.txt)
-          # On prend le dernier fichier ajouté dans le dossier packages
+          # 1. On trouve le fichier .txt qui vient d'être ajouté
           NEW_FILE=$(ls -t packages/*.txt | head -1)
           
-          PKG_NAME=$(grep "Package:" $NEW_FILE | cut -d' ' -f2-)
-          PKG_VER=$(grep "Version:" $NEW_FILE | cut -d' ' -f2-)
-          PKG_URL=$(grep "URL:" $NEW_FILE | cut -d' ' -f2-)
+          # 2. On extrait les valeurs proprement
+          # On utilise sed pour supprimer "Package: ", "Version: ", etc.
+          P_NAME=$(grep "Package:" $NEW_FILE | sed 's/Package: //g' | xargs)
+          P_VER=$(grep "Version:" $NEW_FILE | sed 's/Version: //g' | xargs)
+          P_URL=$(grep "URL:" $NEW_FILE | sed 's/URL: //g' | xargs)
 
-          # 2. On va modifier le fichier pkg.json dans la branche pages
+          echo "Updating $P_NAME in pkg.json..."
+
+          # 3. On modifie le pkg.json sur la branche pages avec jq
           cd db-branch
           
-          # Utilisation de 'jq' (outil puissant pour manipuler le JSON)
-          # On ajoute l'entrée au JSON existant
-          jq --arg name "$PKG_NAME" \
-             --arg ver "$PKG_VER" \
-             --arg url "$PKG_URL" \
+          # Cette commande magique ajoute l'entrée sans effacer le reste
+          jq --arg name "$P_NAME" \
+             --arg ver "$P_VER" \
+             --arg url "$P_URL" \
              '. + {($name): {"version": $ver, "url": $url}}' pkg.json > tmp.json && mv tmp.json pkg.json
 
       - name: Commit and Push to Pages
@@ -52,5 +54,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pkg.json
-          git commit -m "Add ${{ steps.update.outputs.pkg_name }} to database"
+          git commit -m "Database Update: Added package from PR #${{ github.event.pull_request.number }}"
           git push origin pages
