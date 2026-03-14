@@ -22,5 +22,9 @@
   "": {
     "version": "",
     "url": ""
+  },
+  "Test": {
+    "version": "Test",
+    "url": "Test"
   }
 }
